@@ -67,3 +67,7 @@ notify = ["/绝对路径/codex-bark-notify-hook/bin/codex-notify-hook.sh"]
 - 去重状态默认写入 `tmp/last-notify-key`
 
 这两个目录默认已加入 `.gitignore`，不会污染仓库提交。
+
+## 致谢
+
+感谢 LinuxDo 社区的讨论、经验分享与灵感支持。
