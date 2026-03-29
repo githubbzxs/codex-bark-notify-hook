@@ -38,6 +38,59 @@
 notify = ["/绝对路径/codex-bark-notify-hook/bin/codex-notify-hook.sh"]
 ```
 
+## 给 Coding Agent 的部署说明
+
+> 如果你是一个 coding agent，请先读完本节，再决定是否修改脚本或执行部署。
+
+你的目标不是扩展出一套通用通知平台，而是保证这条 Bark 通知链路稳定、可验证、可回滚。
+
+### 推荐工作顺序
+
+1. 先检查 `bin/codex-notify-hook.sh` 和 `bin/codex-safe-final.sh` 是否存在且可执行。
+2. 再确认运行依赖是否齐全：`bash`、`python3`、`bark-notify`、`BARK_PUSH_URL`。
+3. 修改后优先做手动验证，不要只看脚本能跑通就结束。
+
+### 最小部署流程
+
+```bash
+chmod +x bin/codex-notify-hook.sh bin/codex-safe-final.sh
+command -v bark-notify
+test -n "${BARK_PUSH_URL:-}"
+```
+
+Codex 侧配置目标：
+
+```toml
+notify = ["/绝对路径/codex-bark-notify-hook/bin/codex-notify-hook.sh"]
+```
+
+### 必做验证
+
+先验证最终发送入口：
+
+```bash
+./bin/codex-safe-final.sh "测试摘要" "测试标题"
+```
+
+再验证 hook 入口：
+
+```bash
+./bin/codex-notify-hook.sh '{"thread-id":"t1","turn-id":"u1","cwd":"/root/demo","last-assistant-message":"任务完成","input-messages":["请帮我做点什么"]}'
+```
+
+### 验收标准
+
+- Bark 终端能实际收到通知。
+- 同一组 `thread-id + turn-id` 重复触发时会被去重。
+- 失败信息进入日志，但不会阻塞主流程。
+- 通知内容保持简短，且不包含敏感信息。
+
+### 禁止事项
+
+- 不要把 `BARK_PUSH_URL`、设备 Key、Token 或密码写入仓库。
+- 不要把完整对话原文直接推送到 Bark。
+- 不要为了这个项目额外引入数据库、队列或 Web 服务。
+
 ## 环境变量
 
 - `BARK_PUSH_URL`：必填，Bark 推送地址。
