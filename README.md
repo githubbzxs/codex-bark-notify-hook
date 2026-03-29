@@ -2,9 +2,9 @@
 
 # codex-bark-notify-hook
 
-Turn Codex `notify` callbacks into reliable Bark and Feishu notifications.
+Turn Codex `notify` callbacks into reliable Bark notifications and webhook relays.
 
-A lightweight notification hook for long-running coding sessions: parse payloads, compress summaries, dedupe by turn, and deliver through Bark or Feishu Webhook with a single entrypoint.
+A lightweight notification hook for long-running coding sessions: parse payloads, compress summaries, dedupe by turn, and deliver through Bark or an external webhook relay with a single entrypoint.
 
 [![中文](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-0F172A?style=flat-square)](./README.zh-CN.md)
 ![Shell](https://img.shields.io/badge/Shell-Bash-121011?style=flat-square&logo=gnubash&logoColor=white)
@@ -17,7 +17,7 @@ A lightweight notification hook for long-running coding sessions: parse payloads
 
 ## Overview
 
-`codex-bark-notify-hook` is a standalone notification adapter for Codex. It accepts Codex `notify` payloads, extracts a readable title and summary, deduplicates by `thread-id + turn-id`, then forwards the result to Bark or Feishu.
+`codex-bark-notify-hook` is a standalone notification adapter for Codex. It accepts Codex `notify` payloads, extracts a readable title and summary, deduplicates by `thread-id + turn-id`, then forwards the result to Bark or a generic webhook endpoint.
 
 The goal is not to build a heavyweight messaging platform. This repository focuses on a small, portable, easy-to-verify notification loop that can live independently from your main project repositories.
 
@@ -27,7 +27,7 @@ The goal is not to build a heavyweight messaging platform. This repository focus
 - Compress notification summaries for mobile-friendly reading.
 - Deduplicate repeated notifications using `thread-id + turn-id`.
 - Send notifications through `bin/codex-safe-final.sh`, with Bark retrying once on failure.
-- Support Feishu custom bot delivery through Webhook without adding extra services.
+- Support generic webhook relay delivery so you can bridge notifications into Feishu or other systems externally.
 - Allow log path, state directory, and notification entrypoint to be overridden via environment variables.
 - Keep runtime artifacts inside `log/` and `tmp/` by default so the repository stays clean.
 
@@ -36,7 +36,7 @@ The goal is not to build a heavyweight messaging platform. This repository focus
 - `bash` for hook orchestration and notification entrypoints
 - `python3` for JSON parsing and summary formatting
 - `bark-notify` for Bark delivery
-- Feishu custom bot Webhook for Feishu delivery
+- Generic HTTP webhook relay for external forwarding
 
 ## Project Structure
 
@@ -75,7 +75,7 @@ chmod +x bin/codex-notify-hook.sh bin/codex-safe-final.sh
 command -v python3
 export BARK_PUSH_URL="https://example.com/your-bark-endpoint"
 # or
-export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/your-token"
+export WEBHOOK_URL="https://example.com/your-relay-webhook"
 # if you use Bark
 command -v bark-notify
 ```
@@ -99,7 +99,7 @@ notify = ["/absolute/path/to/codex-bark-notify-hook/bin/codex-notify-hook.sh"]
 
 - Configure at least one channel:
 - `BARK_PUSH_URL`: Bark push endpoint
-- `FEISHU_WEBHOOK_URL`: Feishu custom bot Webhook URL
+- `WEBHOOK_URL`: generic webhook endpoint for relaying notifications externally
 
 ### Supported by This Repository
 
@@ -107,7 +107,8 @@ notify = ["/absolute/path/to/codex-bark-notify-hook/bin/codex-notify-hook.sh"]
 - `CODEX_BARK_HOOK_LOG`: custom hook log file path
 - `CODEX_BARK_STATE_DIR`: custom dedupe state directory
 - `CODEX_BARK_SAFE_FINAL`: custom path to the final notification entry script
-- `BARK_RETRY_DELAY_SEC`: retry delay in seconds, default `1`
+- `NOTIFY_RETRY_DELAY_SEC`: retry delay in seconds, default `1`
+- `BARK_RETRY_DELAY_SEC`: backward-compatible retry delay alias
 
 ## Runtime Model
 
@@ -126,7 +127,7 @@ If you are a coding agent, your primary goal here is not feature expansion. It i
 Before changing anything, confirm these facts:
 
 - There are only two core entrypoints: `bin/codex-notify-hook.sh` and `bin/codex-safe-final.sh`.
-- The real dependencies are `bash`, `python3`, and at least one configured channel: Bark or Feishu Webhook.
+- The real dependencies are `bash`, `python3`, and at least one configured channel: Bark or a webhook relay.
 - A change is not done because the scripts look reasonable. It is done only when a real notification is received and duplicate turns are suppressed.
 
 Recommended workflow:
@@ -145,7 +146,7 @@ Minimum validation commands:
 
 A change should only be considered complete when all of the following are true:
 
-- A Bark device or Feishu group actually receives the notification.
+- A Bark device or downstream webhook target actually receives the notification.
 - Repeated triggers for the same `thread-id + turn-id` are deduplicated.
 - Logs are written, but failures do not interrupt the main Codex flow.
 - Notification content stays short and excludes secrets, tokens, passwords, or full conversation text.
@@ -154,11 +155,11 @@ A change should only be considered complete when all of the following are true:
 
 - You run Codex tasks in the terminal and want a push notification when a turn completes.
 - You want notification logic to live outside your main application repositories so it can be reused across machines.
-- You want a small, direct solution instead of standing up a full bot platform or messaging backend.
+- You want a small, direct solution and optionally hand off delivery to your own webhook relay for Feishu or other tools.
 
 ## Security Note
 
-- Do not commit `BARK_PUSH_URL`, `FEISHU_WEBHOOK_URL`, device keys, tokens, passwords, or other secrets.
+- Do not commit `BARK_PUSH_URL`, `WEBHOOK_URL`, device keys, tokens, passwords, or other secrets.
 - Do not push full conversation content into notification bodies.
 - Do not make notification retries block the main Codex workflow.
 - Keep `log/` and `tmp/` out of versioned runtime artifacts.

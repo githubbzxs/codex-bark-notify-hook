@@ -2,15 +2,15 @@
 
 set -euo pipefail
 
-# 统一发送通知，当前支持 Bark 与飞书 Webhook。
+# 统一发送通知，当前支持 Bark 与通用 Webhook 转发。
 # 用法：
 #   ./bin/codex-safe-final.sh "本次任务的一句话摘要"
 #   ./bin/codex-safe-final.sh "本次任务的一句话摘要" "自定义标题"
 
 SUMMARY="${1:-}"
 TITLE="${2:-Codex 已完成}"
-RETRY_DELAY_SEC="${BARK_RETRY_DELAY_SEC:-1}"
-FEISHU_WEBHOOK_URL="${FEISHU_WEBHOOK_URL:-}"
+RETRY_DELAY_SEC="${NOTIFY_RETRY_DELAY_SEC:-${BARK_RETRY_DELAY_SEC:-1}}"
+WEBHOOK_URL="${WEBHOOK_URL:-}"
 
 if [[ -n "${BARK_NOTIFY_BIN:-}" ]]; then
   NOTIFY_BIN="${BARK_NOTIFY_BIN}"
@@ -54,31 +54,33 @@ send_bark() {
   return 1
 }
 
-send_feishu() {
-  if [[ -z "${FEISHU_WEBHOOK_URL}" ]]; then
+send_webhook() {
+  if [[ -z "${WEBHOOK_URL}" ]]; then
     return 10
   fi
 
-  python3 - "${FEISHU_WEBHOOK_URL}" "${TITLE}" "${SUMMARY}" <<'PY'
+  python3 - "${WEBHOOK_URL}" "${TITLE}" "${SUMMARY}" <<'PY'
 import json
+from datetime import datetime, timezone
 import sys
 import urllib.error
 import urllib.request
 
-webhook = sys.argv[1]
+webhook_url = sys.argv[1]
 title = sys.argv[2]
 summary = sys.argv[3]
 
 text = title if not summary else f"{title}\n{summary}"
 payload = {
-    "msg_type": "text",
-    "content": {
-        "text": text,
-    },
+    "source": "codex-bark-notify-hook",
+    "title": title,
+    "summary": summary,
+    "text": text,
+    "sent_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }
 data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 request = urllib.request.Request(
-    webhook,
+    webhook_url,
     data=data,
     headers={"Content-Type": "application/json; charset=utf-8"},
     method="POST",
@@ -89,28 +91,29 @@ try:
         body = response.read().decode("utf-8", errors="replace")
 except urllib.error.HTTPError as exc:
     detail = exc.read().decode("utf-8", errors="replace")
-    print(f"Feishu Webhook 请求失败：HTTP {exc.code} {detail}", file=sys.stderr)
+    print(f"Webhook 请求失败：HTTP {exc.code} {detail}", file=sys.stderr)
     raise SystemExit(1)
 except Exception as exc:
-    print(f"Feishu Webhook 请求失败：{exc}", file=sys.stderr)
+    print(f"Webhook 请求失败：{exc}", file=sys.stderr)
     raise SystemExit(1)
 
-try:
-    parsed = json.loads(body) if body else {}
-except Exception:
-    parsed = {}
+if body:
+    try:
+        parsed = json.loads(body)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict):
+        status = parsed.get("status")
+        ok = parsed.get("ok")
+        success = parsed.get("success")
+        if status not in (None, "ok", "success", 0, 200):
+            print(f"Webhook 返回异常：status={status} body={body}", file=sys.stderr)
+            raise SystemExit(1)
+        if ok is False or success is False:
+            print(f"Webhook 返回异常：body={body}", file=sys.stderr)
+            raise SystemExit(1)
 
-status_code = parsed.get("StatusCode")
-code = parsed.get("code")
-
-if status_code not in (None, 0):
-    print(f"Feishu Webhook 返回异常：StatusCode={status_code} body={body}", file=sys.stderr)
-    raise SystemExit(1)
-if code not in (None, 0):
-    print(f"Feishu Webhook 返回异常：code={code} body={body}", file=sys.stderr)
-    raise SystemExit(1)
-
-print("Feishu 通知发送成功。")
+print("Webhook 通知发送成功。")
 PY
 }
 
@@ -127,9 +130,9 @@ if [[ -n "${BARK_PUSH_URL:-}" ]]; then
   fi
 fi
 
-if [[ -n "${FEISHU_WEBHOOK_URL}" ]]; then
+if [[ -n "${WEBHOOK_URL}" ]]; then
   configured_channels=$((configured_channels + 1))
-  if send_feishu; then
+  if send_webhook; then
     successful_channels=$((successful_channels + 1))
   else
     failed_channels=$((failed_channels + 1))
@@ -137,7 +140,7 @@ if [[ -n "${FEISHU_WEBHOOK_URL}" ]]; then
 fi
 
 if [[ "${configured_channels}" -eq 0 ]]; then
-  echo "错误：未设置任何通知通道，请至少配置 BARK_PUSH_URL 或 FEISHU_WEBHOOK_URL。" >&2
+  echo "错误：未设置任何通知通道，请至少配置 BARK_PUSH_URL 或 WEBHOOK_URL。" >&2
   exit 4
 fi
 
