@@ -2,9 +2,9 @@
 
 # codex-bark-notify-hook
 
-把 Codex 的 `notify` 回调稳定地转成 Bark 推送。
+把 Codex 的 `notify` 回调稳定地转成 Bark 和飞书通知。
 
-一套足够轻、足够直接、适合长期挂在开发环境里的通知 hook：解析 payload、压缩摘要、按 turn 去重、统一发送、失败重试。
+一套足够轻、足够直接、适合长期挂在开发环境里的通知 hook：解析 payload、压缩摘要、按 turn 去重，并通过统一入口发送到 Bark 或飞书 Webhook。
 
 [![English](https://img.shields.io/badge/README-English-0F172A?style=flat-square)](./README.md)
 ![Shell](https://img.shields.io/badge/Shell-Bash-121011?style=flat-square&logo=gnubash&logoColor=white)
@@ -17,7 +17,7 @@
 
 ## 项目概览
 
-`codex-bark-notify-hook` 是一个独立的 Codex 通知适配层。它接收 Codex 的 `notify` payload，提取可读标题与摘要，按 `thread-id + turn-id` 去重，再通过 `bark-notify` 把结果发送到 Bark。
+`codex-bark-notify-hook` 是一个独立的 Codex 通知适配层。它接收 Codex 的 `notify` payload，提取可读标题与摘要，按 `thread-id + turn-id` 去重，再把结果发送到 Bark 或飞书。
 
 这个仓库的目标不是做一套重型消息平台，而是提供一个足够小、可迁移、容易验证的通知闭环。你可以把它单独放在任意机器上，然后在 Codex 配置中把它接成统一通知入口。
 
@@ -26,7 +26,8 @@
 - 接收 Codex `notify` payload，自动提取标题、摘要与上下文目录名。
 - 默认把摘要压缩成更适合移动端通知阅读的短文本。
 - 使用 `thread-id + turn-id` 作为去重键，避免同一轮重复推送。
-- 统一通过 `bin/codex-safe-final.sh` 发送 Bark，并在失败时自动重试 1 次。
+- 统一通过 `bin/codex-safe-final.sh` 发送通知，其中 Bark 在失败时自动重试 1 次。
+- 支持通过飞书自定义机器人 Webhook 直接推送，无需额外服务。
 - 日志文件、状态目录、通知入口都支持环境变量覆盖，不依赖固定路径。
 - 默认把运行产物限制在 `log/` 和 `tmp/`，避免污染仓库提交。
 
@@ -34,7 +35,8 @@
 
 - `bash`：负责 hook 入口、流程编排与发送脚本。
 - `python3`：负责解析 JSON payload 和整理通知文案。
-- `bark-notify`：负责真正发送 Bark 推送。
+- `bark-notify`：负责发送 Bark 推送。
+- 飞书自定义机器人 Webhook：负责发送飞书通知。
 
 ## 项目结构
 
@@ -71,8 +73,11 @@ chmod +x bin/codex-notify-hook.sh bin/codex-safe-final.sh
 
 ```bash
 command -v python3
-command -v bark-notify
 export BARK_PUSH_URL="https://example.com/your-bark-endpoint"
+# 或者
+export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/your-token"
+# 如果你使用 Bark
+command -v bark-notify
 ```
 
 4. 在 Codex 全局配置中接入 `notify` hook。
@@ -90,9 +95,11 @@ notify = ["/absolute/path/to/codex-bark-notify-hook/bin/codex-notify-hook.sh"]
 
 ## 环境变量
 
-### 必填
+### 至少一个通道
 
+- 至少配置一个通道：
 - `BARK_PUSH_URL`：Bark 推送地址。
+- `FEISHU_WEBHOOK_URL`：飞书自定义机器人 Webhook 地址。
 
 ### 仓库脚本支持
 
@@ -109,7 +116,7 @@ notify = ["/absolute/path/to/codex-bark-notify-hook/bin/codex-notify-hook.sh"]
 1. Codex 触发 `notify`，并把 payload 传给 `bin/codex-notify-hook.sh`。
 2. hook 脚本解析 JSON，生成标题、摘要和去重键。
 3. 如果当前 turn 已推送过，则直接记录日志并跳过。
-4. 若未命中去重，则调用 `bin/codex-safe-final.sh` 统一发送 Bark。
+4. 若未命中去重，则调用 `bin/codex-safe-final.sh` 统一发送通知。
 5. 发送成功后写入状态文件；发送失败则记录日志，但不阻塞 Codex 主流程。
 
 ## 给 Coding Agent 的说明
@@ -119,8 +126,8 @@ notify = ["/absolute/path/to/codex-bark-notify-hook/bin/codex-notify-hook.sh"]
 开始工作前，请先确认以下事实：
 
 - 核心入口只有两个：`bin/codex-notify-hook.sh` 与 `bin/codex-safe-final.sh`。
-- 真实依赖只有 `bash`、`python3`、`bark-notify` 和环境变量 `BARK_PUSH_URL`。
-- 这个项目的验收标准不是脚本看起来合理，而是能收到一条真实 Bark 通知，并且重复 turn 不会重复推送。
+- 真实依赖只有 `bash`、`python3`，以及至少一个已配置的通知通道：Bark 或飞书 Webhook。
+- 这个项目的验收标准不是脚本看起来合理，而是能收到一条真实通知，并且重复 turn 不会重复推送。
 
 推荐工作顺序：
 
@@ -138,20 +145,20 @@ notify = ["/absolute/path/to/codex-bark-notify-hook/bin/codex-notify-hook.sh"]
 
 只有满足下面几点，才算改动完成：
 
-- Bark 终端实际收到通知。
+- Bark 终端或飞书群实际收到通知。
 - 同一组 `thread-id + turn-id` 被重复触发时会命中去重。
 - 日志有记录，但失败不会中断主流程。
 - 通知内容保持简短，不包含密钥、Token、密码或完整对话正文。
 
 ## 使用场景
 
-- 你经常把 Codex 任务挂在终端里跑，希望任务结束后第一时间收到手机提醒。
+- 你经常把 Codex 任务挂在终端里跑，希望任务结束后第一时间收到推送提醒。
 - 你希望通知逻辑能独立于业务仓库存在，方便多台机器复用。
 - 你需要一个足够轻的方案，而不是搭一整套机器人、数据库和消息中间件。
 
 ## 安全说明
 
-- 不要把 `BARK_PUSH_URL`、设备 Key、Token、密码或其他敏感信息写入仓库。
+- 不要把 `BARK_PUSH_URL`、`FEISHU_WEBHOOK_URL`、设备 Key、Token、密码或其他敏感信息写入仓库。
 - 不要把完整对话内容直接塞进通知正文。
 - 不要把失败重试设计成阻塞 Codex 主流程。
 - `log/` 与 `tmp/` 默认不会进入提交历史，请保持这一约束。
